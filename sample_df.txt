@@ -1,0 +1,13 @@
+sample_id	fungus	N_type	N_level_mg_L	treatment	replicate	diameter_mm_251114	diameter_mm_251117	diameter_mm_251120
+none_0_1	Sb	none	0	none_0	1	8.9	13	20
+none_0_2	Sb	none	0	none_0	2	9.4	11.5	24
+none_0_3	Sb	none	0	none_0	3	9.5	12.9	23
+none_0_4	Sb	none	0	none_0	4	10	12.3	24.5
+NH4_4_1	Sb	NH4	4	NH4_4	1	8.5	11.9	19
+NH4_4_2	Sb	NH4	4	NH4_4	2	8.7	12.5	21
+NH4_4_3	Sb	NH4	4	NH4_4	3	9.4	10.8	22.5
+NH4_4_4	Sb	NH4	4	NH4_4	4	8	11.6	21.1
+NH4_8_1	Sb	NH4	8	NH4_8	1	6.7	10.9	18.2
+NH4_8_2	Sb	NH4	8	NH4_8	2	7.5	11.2	17.9
+NH4_8_3	Sb	NH4	8	NH4_8	3	8	11.1	17.5
+NH4_8_4	Sb	NH4	8	NH4_8	4	7.8	9.9	16.5
