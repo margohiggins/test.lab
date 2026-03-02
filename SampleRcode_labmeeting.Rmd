@@ -1,0 +1,284 @@
+---
+title: "SampleRcode_labmeeting"
+author: "Aizah Khurram"
+date: "2026-03-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+```{r}
+#have to install libraries if not already installed:
+#install.packages(c("tidyverse","broom","dplyr", multcomp","multcompView"))
+library(tidyverse)
+library(broom)
+library(dplyr)
+#Tukey tests + letter displays:
+library(multcomp)
+library(multcompView)
+
+```
+Load data:
+```{r}
+# Change this path to wherever your file is stored
+df <- read_delim("/Users/aizahkhurram/Downloads/SampleRCode/SampleRCode/sample_df.txt", delim = "\t")
+```
+
+Standard error:
+```{r}
+# Standard error = SD / sqrt(n)
+se <- function(x, na.rm = TRUE){
+  x <- if(na.rm) x[!is.na(x)] else x #drop NAs if removing them
+  sd(x) / sqrt(length(x))
+}
+```
+
+Convert pairwise p-values to letters
+```{r}
+letters_from_pairwise <- function(pmat, alpha = 0.05){
+rn <- rownames(pmat)
+cn <- colnames(pmat)
+
+pvec <- c() #creates empty vector to store values
+for(i in seq_along(rn)){
+  for(j in seq_along(cn)){
+     p <- pmat[i,j]
+     if(!is.na(p)){ #only keeps real comparisons
+        nm <- paste(rn[i], cn[j], sep="-")
+        pvec[nm] <- p #store p value
+      }
+    }
+  }
+
+multcompView::multcompLetters(pvec, threshold = alpha)$Letters # this converts the the set of p-values into letters
+}
+```
+
+Automatic Statistics Choices
+if residuals are normal (Shapiro test), and if variances are equal (fligner test), then we use ANOVA + Tukey, if not then we use Kruskal + Wilcoxon
+```{r}
+#dat= data table
+#response = column name as string for numeric response
+#group = column name as string for treatment
+
+auto_stats_letters <- function(dat, response, group, alpha = 0.05){
+
+#check to see if you've misspelled something etc
+  if (!response %in% names(dat)) stop("response column not found: ", response)
+  if (!group    %in% names(dat)) stop("group column not found: ", group)
+
+# keep only needed columns
+  d <- dat[, c(group, response), drop = FALSE] #drop=false is to keep it as a data frame
+  d <- d[!is.na(d[[group]]) & !is.na(d[[response]]), , drop = FALSE]
+  d[[group]] <- as.factor(d[[group]]) #d[[group]] uses string is group to access the column and keeps it as a factor
+
+# If fewer than 2 groups, return all "a" since you can't run comparisons
+  if (nlevels(d[[group]]) < 2) {
+    letters <- setNames(rep("a", nlevels(d[[group]])), levels(d[[group]]))
+    return(list(method = NA, normality_p = NA, homogeneity_p = NA, letters = letters))
+  }
+
+ # Fit ANOVA model
+  fit <- aov(stats::as.formula(paste0(response, " ~ ", group)), data = d)
+
+ # Assumption checks
+  #residuals(fit) = model residuals
+  #tryCatch = prevents errors if Shapiro can't run due to too few points
+  #Fligner= checks if variance is equal across groups (similar to Bartlett/Levene)
+  sh_p <- tryCatch(shapiro.test(residuals(fit))$p.value, error = function(e) NA_real_)
+  fl_p <- tryCatch(
+    fligner.test(stats::as.formula(paste0(response, " ~ ", group)), data = d)$p.value,
+    error = function(e) NA_real_
+  )
+# uses parametric if Shapiro and Fligner are =/> than 0.05 
+use_parametric <- is.finite(sh_p) && is.finite(fl_p) && sh_p >= alpha && fl_p >= alpha
+
+if (use_parametric) {
+    tuk <- TukeyHSD(fit) # runs Tukey pairwise comparisons after ANOVA
+    cl  <- multcompView::multcompLetters4(fit, tuk) #turns Tukey p values into letters
+    # cl is a list; extract letters for our grouping variable:
+    letters <- cl[[group]]$Letters #basically stores what is happening as a label
+    method <- "ANOVA + TukeyHSD"
+  } else {
+    #pairwise.wilxox.test does pairwise rank-based comparisons
+    pw <- pairwise.wilcox.test(
+      x = d[[response]],
+      g = d[[group]],
+      p.adjust.method = "BH",
+      exact = FALSE
+    )
+    letters <- letters_from_pairwise(pw$p.value, alpha = alpha) #converts to p-values
+    method  <- "Kruskal-Wallis + pairwise Wilcoxon (BH)" #stores method name
+  }
+  list(method = method, normality_p = sh_p, homogeneity_p = fl_p, letters = letters)
+}
+
+```
+
+Clean data:
+```{r}
+df_plot <- df %>%
+# Rename fungus code → italic label
+mutate(
+  Fungus = recode(fungus,
+                    "Sb" = "italic('S. bescii')")
+  ) %>%
+
+mutate(
+  N_level_mg_L = as.character(N_level_mg_L),
+  treatment    = as.factor(treatment)
+  )
+```
+
+Barplot with points and letters:
+```{r}
+response_var <- "diameter_mm_251120"   # what we measure
+group_var    <- "N_level_mg_L"         # grouping
+```
+
+```{r}
+sum_bar <- df_plot %>%
+  group_by(.data[[group_var]]) %>% #group data by whichever column name is stored in group_var
+  summarise(
+    mean = mean(.data[[response_var]], na.rm = TRUE), #mean diameter in each group
+    se   = se(.data[[response_var]]), #SE within each group
+    .groups = "drop"
+  ) %>%
+  rename(group = .data[[group_var]]) #renames grouping column to group since we can then say x=group
+# Run stats + letters
+stats_out <- auto_stats_letters(
+  dat = df_plot,
+  response = response_var,
+  group = group_var,
+  alpha = 0.05
+)
+
+# Convert letters into a dataframe
+letters_df <- tibble(
+  group  = names(stats_out$letters), #group labels
+  letter = unname(stats_out$letters) #letters
+)
+
+# Join letters onto sum_bar so geom_text can find `letter`
+sum_bar <- sum_bar %>%
+  left_join(letters_df, by = "group") %>% #adds letter column to sum_bar by matching group names
+  mutate(y_lab = mean + se + 1)  # where to place letters
+print(sum_bar)
+```
+
+
+```{r}
+ggplot() +
+  theme_classic() +
+
+#Bars
+geom_col(
+  data=sum_bar,
+  aes(x=group, y=mean, fill=group),
+  color="black",
+  width=0.8
+) +
+
+#Error bars
+geom_errorbar(
+  data=sum_bar,
+  aes(x=group, ymin=mean-se, ymax=mean+se),    width=0.15
+ ) +
+
+#Individual points 
+geom_point(
+ data=df_plot,  
+ aes(x=.data[[group_var]],
+     y=.data[[response_var]]),
+ position=position_jitter(width=0.1), size=2, alpha=0.6,
+ color = "red" #if you want the points to match the bars: color = group or color = .data[[group_var]].
+) +
+
+#Letters
+ geom_text(
+  data=sum_bar,
+  aes(x=group, y=y_lab, label=letter),
+  size=5
+ ) +
+
+labs(
+  title="Day 8",
+  x="Treatment", y="Colony diameter (mm)"
+) +
+scale_fill_manual(
+  values = c("white", "gray", "black"),
+  name = "Treatment"
+) +
+ theme(text=element_text(size=14))
+```
+Summary of which methods were used and p-values from assumption tests
+```{r}
+cat("\nStats used:", stats_out$method,
+    "\nShapiro p =", stats_out$normality_p,
+    "\nFligner p =", stats_out$homogeneity_p,"\n")
+```
+
+
+```{r}
+df_time <- df_plot %>%
+  # add the initial timepoint (Day 0) #column mutate(diameter_mm_251112 = 6) %>%
+  pivot_longer(
+    cols = c(diameter_mm_251114,
+             diameter_mm_251117,
+             diameter_mm_251120),
+    names_to = "Day",
+    values_to = "Diameter"
+  ) %>%
+  # rename columns to actual day numbers, then make numeric for a real time axis
+  mutate(
+    Day = recode(Day,
+      "diameter_mm_251114" = "2",
+      "diameter_mm_251117" = "5",
+      "diameter_mm_251120" = "8"
+    ),
+    Day = as.numeric(Day),
+    N_level_mg_L = as.factor(N_level_mg_L)  # for grouping/legend
+  )
+
+ggplot(df_time, aes(x = Day, y = Diameter, color = N_level_mg_L, group = N_level_mg_L)) +
+  theme_classic() +
+
+  # mean line per N level
+  stat_summary(fun = mean, geom = "line", linewidth = 1) +
+
+  # mean points per N level
+  stat_summary(fun = mean, geom = "point", size = 3) +
+
+  # SE error bars around the mean
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, color = "black") +
+
+  # individual raw data points
+  geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.35, size = 2) +
+
+  #if you have multipe species can add this to make separate panels for each species. Italics_parsed goes back to when we set it as italic('S.bescii') so it will print it as italics
+  facet_wrap(~Fungus, labeller = label_parsed) +
+
+  scale_x_continuous(breaks = c(2, 5, 8)) +
+
+  labs(
+    x = "Time (days)",
+    y = "Colony diameter (mm)",
+    color = "N level" #)
+  #+scale_color_manual(
+  #values = c("white", "gray", "black"),
+ # name = "N level"
+  )
+
+```
+```{r}
+#ggsave("/Users/aizahkhurram/Documents/name.png", plotname, width = 7, height = 5.5, dpi = 300)
+```
+
+```{r}
+#y = expression("Total " * {}^{13} * "C in BGB (mg)")
+# y = expression(delta^{13}*C)
+```
+
